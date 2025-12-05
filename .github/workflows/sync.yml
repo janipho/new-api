@@ -1,0 +1,62 @@
+name: Sync
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    if: ${{ github.repository == 'janipho/new-api' }} 
+
+    steps:
+      - name: Set up Git identity
+        run: |
+          git config --global user.name "github-bot"
+          git config --global user.email "bot@example.com"
+
+      - name: Clone source repo (private-safe)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Cloning source repo: ${{ github.repository }}"
+          git clone --mirror https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }} repo
+          cd repo
+
+          echo "Pushing main → ${{ secrets.USER_NAME }}/${{ secrets.REPO }}:SYNC"
+          git push --force "https://${{ secrets.GH_PAT }}@github.com/${{ secrets.USER_NAME }}/${{ secrets.REPO }}.git" \
+            +refs/heads/main:refs/heads/SYNC
+
+      - name: Check existing PR
+        id: check_pr
+        run: |
+          echo "🔍 Checking existing PR..."
+          response=$(curl -s -H "Authorization: token ${{ secrets.GH_PAT }}" \
+            "https://api.github.com/repos/${{ secrets.USER_NAME }}/${{ secrets.REPO }}/pulls?head=${{ secrets.USER_NAME }}:SYNC&base=main&state=open")
+          
+          echo "$response" > pr_check.json
+          if grep -q '"number":' pr_check.json; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "✅ Existing PR found."
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "🚫 No existing PR."
+          fi
+
+      - name: Create Pull Request if not exists
+        if: steps.check_pr.outputs.exists == 'false'
+        run: |
+          echo "🪄 Creating new PR..."
+          curl -s -X POST \
+            -H "Authorization: token ${{ secrets.GH_PAT }}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${{ secrets.USER_NAME }}/${{ secrets.REPO }}/pulls \
+            -d @- <<EOF
+          {
+            "title": "🔄 Sync: Update main from SYNC",
+            "body": "Automated PR to merge latest changes from **${{ github.repository }}:main** → **${{ secrets.REPO }}:main**.",
+            "head": "SYNC",
+            "base": "main"
+          }
+          EOF
